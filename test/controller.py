@@ -15,7 +15,10 @@ class SimpleController(app_manager.OSKenApp):
     def __init__(self, *args, **kwargs):
         super(SimpleController, self).__init__(*args, **kwargs)
 
-    # Called when a switch connects
+    # ---------------------------------------------------
+    # SWITCH CONNECTED
+    # ---------------------------------------------------
+
     @set_ev_cls(
         ofp_event.EventOFPSwitchFeatures,
         CONFIG_DISPATCHER
@@ -29,7 +32,44 @@ class SimpleController(app_manager.OSKenApp):
             datapath.id
         )
 
-    # Called when OVS sends an unknown packet to controller
+        ofp = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Send unmatched packets to the controller
+        match = parser.OFPMatch()
+
+        actions = [
+            parser.OFPActionOutput(
+                ofp.OFPP_CONTROLLER,
+                ofp.OFPCML_NO_BUFFER
+            )
+        ]
+
+        instructions = [
+            parser.OFPInstructionActions(
+                ofp.OFPIT_APPLY_ACTIONS,
+                actions
+            )
+        ]
+
+        flow_mod = parser.OFPFlowMod(
+            datapath=datapath,
+            priority=0,
+            match=match,
+            instructions=instructions
+        )
+
+        datapath.send_msg(flow_mod)
+
+        self.logger.info(
+            "Table-miss flow installed on DPID=%s",
+            datapath.id
+        )
+
+    # ---------------------------------------------------
+    # PACKET IN
+    # ---------------------------------------------------
+
     @set_ev_cls(
         ofp_event.EventOFPPacketIn,
         MAIN_DISPATCHER
@@ -37,12 +77,20 @@ class SimpleController(app_manager.OSKenApp):
     def packet_in_handler(self, ev):
 
         msg = ev.msg
-        datapath = msg.datapath
 
+        datapath = msg.datapath
         ofp = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        # Flood the packet to all switch ports
+        in_port = msg.match['in_port']
+
+        self.logger.info(
+            "Packet-In: DPID=%s IN_PORT=%s",
+            datapath.id,
+            in_port
+        )
+
+        # Flood packet to all ports
         actions = [
             parser.OFPActionOutput(ofp.OFPP_FLOOD)
         ]
@@ -50,13 +98,13 @@ class SimpleController(app_manager.OSKenApp):
         out = parser.OFPPacketOut(
             datapath=datapath,
             buffer_id=msg.buffer_id,
-            in_port=msg.match['in_port'],
+            in_port=in_port,
             actions=actions
         )
 
         datapath.send_msg(out)
 
         self.logger.info(
-            "Packet received from switch DPID=%s",
+            "Packet-Out sent: DPID=%s",
             datapath.id
         )
