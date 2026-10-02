@@ -1,0 +1,1 @@
+sudo mn --topo single,2 --controller remote --switch ovs,protocols=OpenFlow13 --controller-ip 127.0.0.1 --controller-port 6653
