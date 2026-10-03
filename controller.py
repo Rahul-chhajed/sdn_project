@@ -1,6 +1,8 @@
 """OS-Ken controller for dynamic edge/cloud LLM service steering."""
 import json
+import os
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from os_ken.base import app_manager
 from os_ken.controller import ofp_event
@@ -8,7 +10,6 @@ from os_ken.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib import hub
 from os_ken.lib.packet import arp, ethernet, ipv4, packet, tcp
-from os_ken.app.wsgi import ControllerBase, WSGIApplication, Response, route
 
 SERVICE_IP = "10.0.0.50"
 SERVICE_PORT = 8000
@@ -72,7 +73,6 @@ class SteeringState:
 
 class DynamicLLMController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-    _CONTEXTS = {"wsgi": WSGIApplication}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -80,9 +80,16 @@ class DynamicLLMController(app_manager.RyuApp):
         self.mac_to_port = {}
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
-        self.wsgi = kwargs.get("wsgi")
-        if self.wsgi is not None:
-            self.wsgi.register(SteeringController, {"app": self})
+        self.api_thread = self._start_api_server()
+
+    def _start_api_server(self):
+        host = os.getenv("SDN_API_HOST", "127.0.0.1")
+        port = int(os.getenv("SDN_API_PORT", "8080"))
+        SteeringAPIHandler.app = self
+        server = ThreadingHTTPServer((host, port), SteeringAPIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return thread
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -215,35 +222,66 @@ class DynamicLLMController(app_manager.RyuApp):
             self.state.port_stats[str(ev.msg.datapath.id)] = stats
 
 
-class SteeringController(ControllerBase):
-    def __init__(self, req, link, data, **config):
-        super().__init__(req, link, data, **config)
-        self.app = data["app"]
+class SteeringAPIHandler(BaseHTTPRequestHandler):
+    app = None
 
-    @route("steering", "/status", methods=["GET"])
-    def status(self, req, **kwargs):
-        return Response(content_type="application/json", body=json.dumps(self.app.state.snapshot()).encode("utf-8"))
+    def log_message(self, format_string, *args):
+        return
 
-    @route("steering", "/policy", methods=["POST"])
-    def policy(self, req, **kwargs):
-        payload = json.loads(req.body.decode("utf-8") or "{}")
+    def _json_response(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_payload(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+
+    def do_GET(self):
+        if self.path == "/status":
+            self._json_response(200, self.app.state.snapshot())
+        else:
+            self._json_response(404, {"error": "not found"})
+
+    def do_POST(self):
+        try:
+            payload = self._read_payload()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self._json_response(400, {"error": "request body must be valid JSON"})
+            return
+
+        if self.path == "/policy":
+            self._policy(payload)
+        elif self.path.startswith("/load/"):
+            self._load(self.path.split("/", 2)[-1], payload)
+        else:
+            self._json_response(404, {"error": "not found"})
+
+    def _policy(self, payload):
         mode = payload.get("mode", "dynamic")
         if mode not in ("dynamic", "static"):
-            return Response(status=400, body=b"mode must be dynamic or static")
+            self._json_response(400, {"error": "mode must be dynamic or static"})
+            return
         with self.app.state.lock:
             self.app.state.mode = mode
             if payload.get("backend") in BACKENDS:
                 self.app.state.static_backend = payload["backend"]
-        return self.status(req)
+        self._json_response(200, self.app.state.snapshot())
 
-    @route("steering", "/load/{backend}", methods=["POST"])
-    def load(self, req, backend, **kwargs):
+    def _load(self, backend, payload):
         if backend not in BACKENDS:
-            return Response(status=404, body=b"unknown backend")
-        payload = json.loads(req.body.decode("utf-8") or "{}")
-        value = max(0.0, min(1.0, float(payload.get("load", 0.0))))
+            self._json_response(404, {"error": "unknown backend"})
+            return
+        try:
+            value = max(0.0, min(1.0, float(payload.get("load", 0.0))))
+        except (TypeError, ValueError):
+            self._json_response(400, {"error": "load must be a number from 0.0 to 1.0"})
+            return
         with self.app.state.lock:
             BACKENDS[backend]["load"] = value
             if "latency_ms" in payload:
                 BACKENDS[backend]["latency_ms"] = max(0.1, float(payload["latency_ms"]))
-        return self.status(req)
+        self._json_response(200, self.app.state.snapshot())
