@@ -40,6 +40,7 @@ class SteeringState:
         self.mode = "dynamic"
         self.static_backend = "cloud"
         self.last_backend = "edge"
+        self.last_scores = {}
         self.packet_count = 0
         self.byte_count = 0
         self.port_stats = {}
@@ -55,15 +56,23 @@ class SteeringState:
                 bandwidth_penalty = max(0.0, 100.0 - backend["bandwidth_mbps"]) / 10.0
                 scores[name] = backend["latency_ms"] + load_penalty + bandwidth_penalty
             selected = min(scores, key=scores.get)
+            self.last_scores = scores
             self.last_backend = selected
             return selected
 
     def snapshot(self):
         with self.lock:
+            scores = {}
+            for name, backend in BACKENDS.items():
+                load_penalty = backend["load"] * 45.0
+                bandwidth_penalty = max(0.0, 100.0 - backend["bandwidth_mbps"]) / 10.0
+                scores[name] = round(backend["latency_ms"] + load_penalty + bandwidth_penalty, 2)
             return {
                 "mode": self.mode,
                 "static_backend": self.static_backend,
                 "last_backend": self.last_backend,
+                "last_scores": self.last_scores or scores,
+                "current_scores": scores,
                 "packet_count": self.packet_count,
                 "byte_count": self.byte_count,
                 "backends": BACKENDS,
