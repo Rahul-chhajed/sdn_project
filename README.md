@@ -15,69 +15,162 @@ The virtual service IP is intentionally shared by the two backend hosts. The con
 
 ## VM setup
 
-Run these commands in Ubuntu inside the VM:
+Run once in Ubuntu. This example uses the actual project path shown in the VM terminal; replace it if your path is different.
 
 ```bash
-cd ~/sdn_project
+cd ~/Desktop/sdn_project
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 sudo apt-get update
 sudo apt-get install -y mininet openvswitch-switch curl
+sudo systemctl enable --now openvswitch-switch
 ```
 
-OS-Ken and Mininet require root privileges for the switch and network namespaces. Use the virtual environment's Python when starting OS-Ken, and use `sudo -E` so its environment is retained.
+OS-Ken 4.2.2 uses `OSKenApp` and does not support `--wsapi-port`. The controller starts its REST API itself on `127.0.0.1:8080`.
 
-## Run manually
+## Manual test
 
-Terminal 1, from the activated virtual environment:
+Use three terminals. Keep Terminals 1 and 2 running.
+
+### Terminal 1: OS-Ken controller
 
 ```bash
-cd ~/sdn_project
+cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E osken-manager controller.py --ofp-tcp-listen-port 6653 --wsapi-port 8080
+sudo -E "$VIRTUAL_ENV/bin/osken-manager" controller.py \
+	--ofp-tcp-listen-port 6653
 ```
 
-Terminal 2:
+Do not add `--wsapi-port` and do not run `osken-manager --help`; this OS-Ken version treats `--help` as an app name.
 
-```bash
-cd ~/sdn_project
-source .venv/bin/activate
-sudo -E python3 topology.py --cli
-```
-
-At the Mininet prompt, start the endpoint emulators:
-
-```text
-edge python3 /root/sdn_project/llm_server.py --name edge --inference-ms 120 > /tmp/edge.log 2>&1 &
-cloud python3 /root/sdn_project/llm_server.py --name cloud --inference-ms 45 > /tmp/cloud.log 2>&1 &
-client python3 /root/sdn_project/client.py --requests 10
-```
-
-Replace `/root/sdn_project` with the actual absolute path visible inside the VM. A request should return JSON with either `"backend": "edge"` or `"backend": "cloud"`.
-
-Inspect controller state from a third terminal on the VM:
+### Terminal 3: Verify the controller API
 
 ```bash
 curl http://127.0.0.1:8080/status
-curl -X POST http://127.0.0.1:8080/policy -H 'Content-Type: application/json' -d '{"mode":"static","backend":"cloud"}'
-curl -X POST http://127.0.0.1:8080/policy -H 'Content-Type: application/json' -d '{"mode":"dynamic"}'
-curl -X POST http://127.0.0.1:8080/load/edge -H 'Content-Type: application/json' -d '{"load":0.9}'
+sudo ss -ltnp | grep -E ':6653|:8080'
 ```
 
-The load values are normalized from 0.0 to 1.0. Dynamic mode scores latency plus a load penalty; this keeps the policy transparent for a dissertation/demo and makes its decisions easy to reproduce.
+The first command should return JSON. If it fails, OS-Ken is not running correctly.
+
+### Terminal 2: Start Mininet
+
+```bash
+cd ~/Desktop/sdn_project
+source .venv/bin/activate
+sudo mn -c
+sudo -E "$VIRTUAL_ENV/bin/python" topology.py --cli
+```
+
+The topology automatically starts the edge and cloud HTTP emulators. At the `mininet>` prompt, verify both services:
+
+```text
+edge curl http://10.0.0.10:8000/health
+cloud curl http://10.0.0.20:8000/health
+```
+
+Expected results:
+
+```json
+{"backend": "edge", "active": 0, "completed": 0}
+{"backend": "cloud", "active": 0, "completed": 0}
+```
+
+Send a user prompt through the virtual service:
+
+```text
+client python3 /home/vboxuser/Desktop/sdn_project/client.py --requests 1 --prompt "Explain software defined networking"
+```
+
+The response includes the selected backend, inference time, and end-to-end time:
+
+```json
+{"request": 1, "backend": "edge", "response": "synthetic LLM response", "inference_ms": 120.0, "end_to_end_ms": 200.0}
+```
+
+The request goes to `10.0.0.50:8000`. The controller changes the OVS output path: port 2 is edge and port 3 is cloud.
+
+## Demonstrate decisions
+
+Use Terminal 3 to set the routing policy. After changing policy or load, remove the old service flow so the next request is evaluated immediately:
+
+```bash
+sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
+```
+
+### Dynamic mode selects edge
+
+```bash
+curl -X POST http://127.0.0.1:8080/policy \
+	-H 'Content-Type: application/json' \
+	-d '{"mode":"dynamic"}'
+curl -X POST http://127.0.0.1:8080/load/edge \
+	-H 'Content-Type: application/json' \
+	-d '{"load":0.0}'
+sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
+```
+
+At the Mininet prompt:
+
+```text
+client python3 /home/vboxuser/Desktop/sdn_project/client.py --requests 1 --prompt "Test low latency edge inference"
+```
+
+Expected field:
+
+```json
+"backend": "edge"
+```
+
+### High edge load causes cloud selection
+
+```bash
+curl -X POST http://127.0.0.1:8080/load/edge \
+	-H 'Content-Type: application/json' \
+	-d '{"load":0.9}'
+sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
+```
+
+At the Mininet prompt:
+
+```text
+client python3 /home/vboxuser/Desktop/sdn_project/client.py --requests 1 --prompt "Test cloud inference under edge load"
+```
+
+Expected field:
+
+```json
+"backend": "cloud"
+```
+
+Show the controller decision:
+
+```bash
+curl http://127.0.0.1:8080/status
+```
+
+Show the OpenFlow rule installed by the controller:
+
+```bash
+sudo ovs-ofctl -O OpenFlow13 dump-flows s1
+```
+
+An edge rule outputs to port 2 and a cloud rule outputs to port 3.
 
 ## Automated comparison
 
-Start the controller first, then run:
+Stop the Mininet CLI with `exit`, but leave OS-Ken running. Then run:
 
 ```bash
-cd ~/sdn_project
+cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E python3 run_experiment.py --requests 20 --output results.csv
+sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
+	--requests 20 \
+	--prompt "Explain the benefits of edge AI" \
+	--output results.csv
 ```
 
-The runner starts Mininet, launches both emulators, runs a static-cloud phase and a dynamic phase, and writes per-request measurements to `results.csv`. It also prints a summary with mean end-to-end latency, inference latency, and selected backend counts.
+The runner starts Mininet, starts both emulators, runs static-cloud and dynamic phases, writes per-request measurements to `results.csv`, and prints average latency and backend counts.
 
 ## What to extend next
 
@@ -86,8 +179,19 @@ The runner starts Mininet, launches both emulators, runs a static-cloud phase an
 3. Add a multi-switch topology and use port-stat deltas as a bandwidth estimator.
 4. Add repeated trials and confidence intervals before reporting results.
 
-## Troubleshooting
+## Troubleshooting and cleanup
 
-- `Unable to contact the remote controller`: start OS-Ken first and check `sudo ovs-vsctl show`.
-- `Address already in use`: stop the old Mininet run with `sudo mn -c`, then restart the controller.
-- No response from `10.0.0.50`: verify the server processes, the service alias with `edge ip addr`, and the controller flow with `sudo ovs-ofctl -O OpenFlow13 dump-flows s1`.
+- `Unable to contact the remote controller`: start OS-Ken first, then run `sudo ovs-vsctl show` and confirm the switch has controller `tcp:127.0.0.1:6653`.
+- `Connection refused` on port 8000: at the Mininet prompt run `edge cat /tmp/edge.log`, `cloud cat /tmp/cloud.log`, `edge ps`, and `cloud ps`.
+- A policy change appears ineffective: run `sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"` and send a new request.
+- `Address already in use`: stop old processes with `Ctrl+C`, then run `sudo mn -c`.
+
+When finished, exit Mininet and clean up:
+
+```text
+mininet> exit
+```
+
+```bash
+sudo mn -c
+```
