@@ -8,7 +8,7 @@ This project is a runnable Mininet prototype for steering a virtual LLM service 
 - `s1` is an OpenFlow 1.3 OVS switch. Its ports are client=1, edge=2, cloud=3.
 - `edge` has a 2 ms link and a 120 ms synthetic inference time.
 - `cloud` has a 25 ms link and a 45 ms synthetic inference time.
-- `controller.py` chooses a backend using latency, bandwidth, and reported load, then installs an OpenFlow flow for the service IP.
+- `controller.py` chooses a backend using latency, bandwidth, and reported load, then installs forward and reverse OpenFlow flows for the service IP.
 - `llm_server.py` is a deterministic HTTP emulator, so the experiment does not need a real model or GPU.
 
 The virtual service IP is intentionally shared by the two backend hosts. The controller changes only the destination MAC and output port, so the client uses the same URL in every experiment.
@@ -88,11 +88,13 @@ The response includes the selected backend, inference time, and end-to-end time:
 {"request": 1, "backend": "edge", "response": "synthetic LLM response", "inference_ms": 120.0, "end_to_end_ms": 200.0}
 ```
 
-The request goes to `10.0.0.50:8000`. The controller changes the OVS output path: port 2 is edge and port 3 is cloud.
+The request goes to `10.0.0.50:8000`. The controller changes the OVS output path: port 2 is edge and port 3 is cloud. The reverse flow rewrites the response source MAC to the virtual service MAC and sends the response back through port 1.
+
+The topology also installs a static ARP entry for the client on both backend hosts. This is required because the client uses the virtual service MAC, so the backend cannot learn the client's MAC from a normal ARP exchange.
 
 ## Demonstrate decisions
 
-Use Terminal 3 to set the routing policy. The controller automatically removes its old service flow whenever policy or load changes, so the next request is evaluated immediately.
+Use Terminal 3 to set the routing policy. The controller automatically removes only its old forward and reverse service flows when policy or load changes. The table-miss flow remains installed, so the next request is evaluated again.
 
 ### Dynamic mode selects edge
 
@@ -177,7 +179,7 @@ The runner starts Mininet, starts both emulators, runs static-cloud and dynamic 
 
 - `Unable to contact the remote controller`: start OS-Ken first, then run `sudo ovs-vsctl show` and confirm the switch has controller `tcp:127.0.0.1:6653`.
 - `Connection refused` on port 8000: at the Mininet prompt run `edge cat /tmp/edge.log`, `cloud cat /tmp/cloud.log`, `edge ps`, and `cloud ps`.
-- A policy change appears ineffective: confirm that the updated `controller.py` is copied into the VM, restart OS-Ken, and send a new request.
+- A policy change appears ineffective: confirm that the latest `controller.py` is copied into the VM, restart OS-Ken and Mininet, then send a new request.
 - `Address already in use`: stop old processes with `Ctrl+C`, then run `sudo mn -c`.
 
 When finished, exit Mininet and clean up:
