@@ -12,12 +12,14 @@ from mininet.topo import Topo
 
 SERVICE_IP = "10.0.0.50"
 VIRTUAL_MAC = "00:00:00:00:00:fe"
+CLIENT_IP = "10.0.0.100"
+CLIENT_MAC = "00:00:00:00:00:01"
 
 
 class LLMTopo(Topo):
     def build(self):
         switch = self.addSwitch("s1", cls=OVSKernelSwitch, protocols="OpenFlow13")
-        client = self.addHost("client", ip="10.0.0.100/24", mac="00:00:00:00:00:01")
+        client = self.addHost("client", ip=f"{CLIENT_IP}/24", mac=CLIENT_MAC)
         edge = self.addHost("edge", ip="10.0.0.10/24", mac="00:00:00:00:00:02")
         cloud = self.addHost("cloud", ip="10.0.0.20/24", mac="00:00:00:00:00:03")
 
@@ -40,6 +42,7 @@ def build_network(controller_ip="127.0.0.1", controller_port=6653, start_service
     client, edge, cloud = net["client"], net["edge"], net["cloud"]
     for host in (edge, cloud):
         host.cmd(f"ip addr add {SERVICE_IP}/32 dev {host.defaultIntf()}")
+        host.cmd(f"arp -s {CLIENT_IP} {CLIENT_MAC}")
     client.cmd(f"arp -s {SERVICE_IP} {VIRTUAL_MAC}")
     if start_services:
         start_llm_services(net)
