@@ -119,15 +119,16 @@ class DynamicLLMController(app_manager.OSKenApp):
         for datapath in list(self.datapaths.values()):
             parser = datapath.ofproto_parser
             ofproto = datapath.ofproto
-            request = parser.OFPFlowMod(
-                datapath=datapath,
-                command=ofproto.OFPFC_DELETE,
-                out_port=ofproto.OFPP_ANY,
-                out_group=ofproto.OFPG_ANY,
-                priority=200,
-                match=parser.OFPMatch(),
-            )
-            datapath.send_msg(request)
+            for priority in (200, 201):
+                request = parser.OFPFlowMod(
+                    datapath=datapath,
+                    command=ofproto.OFPFC_DELETE,
+                    out_port=ofproto.OFPP_ANY,
+                    out_group=ofproto.OFPG_ANY,
+                    priority=priority,
+                    match=parser.OFPMatch(),
+                )
+                datapath.send_msg(request)
 
     def _install_service_flow(self, datapath, in_port, backend_name):
         backend = BACKENDS[backend_name]
@@ -144,6 +145,18 @@ class DynamicLLMController(app_manager.OSKenApp):
             parser.OFPActionOutput(backend["port"]),
         ]
         self.add_flow(datapath, 200, match, actions, idle_timeout=20)
+        reverse_match = parser.OFPMatch(
+            in_port=backend["port"],
+            eth_type=0x0800,
+            ipv4_src=SERVICE_IP,
+            ip_proto=6,
+            tcp_src=SERVICE_PORT,
+        )
+        reverse_actions = [
+            parser.OFPActionSetField(eth_src=VIRTUAL_MAC),
+            parser.OFPActionOutput(1),
+        ]
+        self.add_flow(datapath, 201, reverse_match, reverse_actions, idle_timeout=20)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
