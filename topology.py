@@ -1,0 +1,65 @@
+"""Mininet topology for the SDN-controlled edge/cloud LLM service."""
+import argparse
+
+from mininet.cli import CLI
+from mininet.link import TCLink
+from mininet.log import info, setLogLevel
+from mininet.net import Mininet
+from mininet.node import OVSKernelSwitch, RemoteController
+from mininet.topo import Topo
+
+SERVICE_IP = "10.0.0.50"
+VIRTUAL_MAC = "00:00:00:00:00:fe"
+
+
+class LLMTopo(Topo):
+    def build(self):
+        switch = self.addSwitch("s1", cls=OVSKernelSwitch, protocols="OpenFlow13")
+        client = self.addHost("client", ip="10.0.0.100/24", mac="00:00:00:00:00:01")
+        edge = self.addHost("edge", ip="10.0.0.10/24", mac="00:00:00:00:00:02")
+        cloud = self.addHost("cloud", ip="10.0.0.20/24", mac="00:00:00:00:00:03")
+
+        self.addLink(client, switch, cls=TCLink, bw=100, delay="1ms")
+        self.addLink(edge, switch, cls=TCLink, bw=100, delay="2ms")
+        self.addLink(cloud, switch, cls=TCLink, bw=1000, delay="25ms")
+
+
+def build_network(controller_ip="127.0.0.1", controller_port=6653):
+    net = Mininet(
+        topo=LLMTopo(),
+        controller=None,
+        switch=OVSKernelSwitch,
+        link=TCLink,
+        autoSetMacs=False,
+        autoStaticArp=False,
+    )
+    net.addController("c0", controller=RemoteController, ip=controller_ip, port=controller_port)
+    net.start()
+    client, edge, cloud = net["client"], net["edge"], net["cloud"]
+    for host in (edge, cloud):
+        host.cmd(f"ip addr add {SERVICE_IP}/32 dev {host.defaultIntf()}")
+    client.cmd(f"arp -s {SERVICE_IP} {VIRTUAL_MAC}")
+    info("*** Network ready: client=%s edge=%s cloud=%s\n" % (client.IP(), edge.IP(), cloud.IP()))
+    return net
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Start the SDN LLM Mininet topology")
+    parser.add_argument("--controller-ip", default="127.0.0.1")
+    parser.add_argument("--controller-port", type=int, default=6653)
+    parser.add_argument("--cli", action="store_true", help="open the Mininet CLI")
+    args = parser.parse_args()
+    setLogLevel("info")
+    net = build_network(args.controller_ip, args.controller_port)
+    try:
+        if args.cli:
+            CLI(net)
+        else:
+            info("*** Use run_experiment.py for automated measurements\n")
+            input("Press Enter to stop Mininet... ")
+    finally:
+        net.stop()
+
+
+if __name__ == "__main__":
+    main()

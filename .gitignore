@@ -1,0 +1,23 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Experiment output
+results.csv
+results-*.csv
+*.log
+
+# OS-Ken, Mininet, and editor artifacts
+*.pid
+.mypy_cache/
+.vscode/
+.idea/
+.DS_Store
