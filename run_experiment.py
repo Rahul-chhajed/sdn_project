@@ -8,7 +8,7 @@ import urllib.request
 
 from mininet.log import info, setLogLevel
 
-from topology import build_network
+from topology import build_network, start_llm_services
 
 CONTROLLER_API = "http://127.0.0.1:8080"
 SERVICE_URL = "http://10.0.0.50:8000/generate"
@@ -57,9 +57,7 @@ def main():
         client, edge, cloud = net["client"], net["edge"], net["cloud"]
         server_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llm_server.py")
         client_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.py")
-        edge.cmd(f"python3 {server_path} --name edge --inference-ms 120 > /tmp/edge.log 2>&1 &")
-        cloud.cmd(f"python3 {server_path} --name cloud --inference-ms 45 > /tmp/cloud.log 2>&1 &")
-        time.sleep(1)
+        start_llm_services(net)
 
         set_policy("static", "cloud")
         rows = run_phase(client, client_path, "static_cloud", args.requests, args.pause_ms, args.prompt)
