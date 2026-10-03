@@ -1,5 +1,7 @@
 """Mininet topology for the SDN-controlled edge/cloud LLM service."""
 import argparse
+import os
+import time
 
 from mininet.cli import CLI
 from mininet.link import TCLink
@@ -24,7 +26,7 @@ class LLMTopo(Topo):
         self.addLink(cloud, switch, cls=TCLink, bw=1000, delay="25ms")
 
 
-def build_network(controller_ip="127.0.0.1", controller_port=6653):
+def build_network(controller_ip="127.0.0.1", controller_port=6653, start_services=False):
     net = Mininet(
         topo=LLMTopo(),
         controller=None,
@@ -39,8 +41,28 @@ def build_network(controller_ip="127.0.0.1", controller_port=6653):
     for host in (edge, cloud):
         host.cmd(f"ip addr add {SERVICE_IP}/32 dev {host.defaultIntf()}")
     client.cmd(f"arp -s {SERVICE_IP} {VIRTUAL_MAC}")
+    if start_services:
+        start_llm_services(net)
     info("*** Network ready: client=%s edge=%s cloud=%s\n" % (client.IP(), edge.IP(), cloud.IP()))
     return net
+
+
+def start_llm_services(net):
+    server_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llm_server.py")
+    edge = net["edge"]
+    cloud = net["cloud"]
+    edge.cmd(f"pkill -f 'llm_server.py --name edge' || true")
+    cloud.cmd(f"pkill -f 'llm_server.py --name cloud' || true")
+    edge.cmd(f"python3 {server_path} --name edge --inference-ms 120 > /tmp/edge.log 2>&1 &")
+    cloud.cmd(f"python3 {server_path} --name cloud --inference-ms 45 > /tmp/cloud.log 2>&1 &")
+    time.sleep(1)
+    edge_health = edge.cmd("curl -sf http://10.0.0.10:8000/health")
+    cloud_health = cloud.cmd("curl -sf http://10.0.0.20:8000/health")
+    if not edge_health or not cloud_health:
+        raise RuntimeError(
+            "LLM service startup failed. Check /tmp/edge.log and /tmp/cloud.log "
+            "from the Mininet CLI."
+        )
 
 
 def main():
@@ -50,7 +72,7 @@ def main():
     parser.add_argument("--cli", action="store_true", help="open the Mininet CLI")
     args = parser.parse_args()
     setLogLevel("info")
-    net = build_network(args.controller_ip, args.controller_port)
+    net = build_network(args.controller_ip, args.controller_port, start_services=True)
     try:
         if args.cli:
             CLI(net)
