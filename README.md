@@ -92,11 +92,7 @@ The request goes to `10.0.0.50:8000`. The controller changes the OVS output path
 
 ## Demonstrate decisions
 
-Use Terminal 3 to set the routing policy. After changing policy or load, remove the old service flow so the next request is evaluated immediately:
-
-```bash
-sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
-```
+Use Terminal 3 to set the routing policy. The controller automatically removes its old service flow whenever policy or load changes, so the next request is evaluated immediately.
 
 ### Dynamic mode selects edge
 
@@ -107,7 +103,6 @@ curl -X POST http://127.0.0.1:8080/policy \
 curl -X POST http://127.0.0.1:8080/load/edge \
 	-H 'Content-Type: application/json' \
 	-d '{"load":0.0}'
-sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
 ```
 
 At the Mininet prompt:
@@ -128,7 +123,6 @@ Expected field:
 curl -X POST http://127.0.0.1:8080/load/edge \
 	-H 'Content-Type: application/json' \
 	-d '{"load":0.9}'
-sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"
 ```
 
 At the Mininet prompt:
@@ -183,7 +177,7 @@ The runner starts Mininet, starts both emulators, runs static-cloud and dynamic 
 
 - `Unable to contact the remote controller`: start OS-Ken first, then run `sudo ovs-vsctl show` and confirm the switch has controller `tcp:127.0.0.1:6653`.
 - `Connection refused` on port 8000: at the Mininet prompt run `edge cat /tmp/edge.log`, `cloud cat /tmp/cloud.log`, `edge ps`, and `cloud ps`.
-- A policy change appears ineffective: run `sudo ovs-ofctl -O OpenFlow13 del-flows s1 "priority=200"` and send a new request.
+- A policy change appears ineffective: confirm that the updated `controller.py` is copied into the VM, restart OS-Ken, and send a new request.
 - `Address already in use`: stop old processes with `Ctrl+C`, then run `sudo mn -c`.
 
 When finished, exit Mininet and clean up:
