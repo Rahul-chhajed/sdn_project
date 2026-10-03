@@ -128,16 +128,33 @@ class DynamicLLMController(app_manager.OSKenApp):
         for datapath in list(self.datapaths.values()):
             parser = datapath.ofproto_parser
             ofproto = datapath.ofproto
-            for priority in (200, 201):
-                request = parser.OFPFlowMod(
-                    datapath=datapath,
-                    command=ofproto.OFPFC_DELETE,
-                    out_port=ofproto.OFPP_ANY,
-                    out_group=ofproto.OFPG_ANY,
-                    priority=priority,
-                    match=parser.OFPMatch(),
-                )
-                datapath.send_msg(request)
+            forward_match = parser.OFPMatch(
+                eth_type=0x0800,
+                ipv4_dst=SERVICE_IP,
+                ip_proto=6,
+                tcp_dst=SERVICE_PORT,
+            )
+            datapath.send_msg(parser.OFPFlowMod(
+                datapath=datapath,
+                command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                match=forward_match,
+            ))
+
+            reverse_match = parser.OFPMatch(
+                eth_type=0x0800,
+                ipv4_src=SERVICE_IP,
+                ip_proto=6,
+                tcp_src=SERVICE_PORT,
+            )
+            datapath.send_msg(parser.OFPFlowMod(
+                datapath=datapath,
+                command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                match=reverse_match,
+            ))
 
     def _install_service_flow(self, datapath, in_port, backend_name):
         backend = BACKENDS[backend_name]
