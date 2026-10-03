@@ -71,7 +71,7 @@ class SteeringState:
             }
 
 
-class DynamicLLMController(app_manager.RyuApp):
+class DynamicLLMController(app_manager.OSKenApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
@@ -114,6 +114,20 @@ class DynamicLLMController(app_manager.RyuApp):
             hard_timeout=hard_timeout,
         )
         datapath.send_msg(request)
+
+    def _clear_service_flows(self):
+        for datapath in list(self.datapaths.values()):
+            parser = datapath.ofproto_parser
+            ofproto = datapath.ofproto
+            request = parser.OFPFlowMod(
+                datapath=datapath,
+                command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                priority=200,
+                match=parser.OFPMatch(),
+            )
+            datapath.send_msg(request)
 
     def _install_service_flow(self, datapath, in_port, backend_name):
         backend = BACKENDS[backend_name]
@@ -269,6 +283,7 @@ class SteeringAPIHandler(BaseHTTPRequestHandler):
             self.app.state.mode = mode
             if payload.get("backend") in BACKENDS:
                 self.app.state.static_backend = payload["backend"]
+        self.app._clear_service_flows()
         self._json_response(200, self.app.state.snapshot())
 
     def _load(self, backend, payload):
@@ -284,4 +299,5 @@ class SteeringAPIHandler(BaseHTTPRequestHandler):
             BACKENDS[backend]["load"] = value
             if "latency_ms" in payload:
                 BACKENDS[backend]["latency_ms"] = max(0.1, float(payload["latency_ms"]))
+        self.app._clear_service_flows()
         self._json_response(200, self.app.state.snapshot())
