@@ -38,7 +38,7 @@ Use three terminals. Keep Terminals 1 and 2 running.
 ```bash
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E "$VIRTUAL_ENV/bin/osken-manager" controller.py \
+sudo -E "$VIRTUAL_VENV/bin/osken-manager" controller.py \
 	--ofp-tcp-listen-port 6653
 ```
 
