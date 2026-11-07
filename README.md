@@ -59,7 +59,7 @@ The first command should return JSON. If it fails, OS-Ken is not running correct
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
 sudo mn -c
-sudo -E "$VIRTUAL_VENV/bin/python" topology.py --cli
+sudo -E "$VIRTUAL_VENV/bin/python3" topology.py --cli
 ```
 
 The topology automatically starts the edge and cloud HTTP emulators. At the `mininet>` prompt, verify both services:
