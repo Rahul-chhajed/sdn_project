@@ -393,10 +393,6 @@ Under normal load, edge has lower network latency, so it wins.
 
 Under high edge load, the load penalty increases and the controller can select cloud.
 
-## 10. Professor-Ready Conclusion
-
-You can present the result like this:
+## 10.Conclusion
 
 > We implemented a stateful SDN-based cloud-edge LLM placement prototype. In the baseline experiment, all requests were sent to a large cloud model. In the dynamic experiment, the controller selected a small networking-adapted model at the edge with light reasoning. The dynamic strategy reduced mean end-to-end latency from 393.85 ms to 247.45 ms, corresponding to a 37.17% improvement. The p95 latency decreased by 37.86%, and the SLA violation rate decreased from 3.33% to 0%. The dynamic phase maintained a simulated quality of 0.74 compared with 0.91 for the large cloud model, demonstrating the latency-quality tradeoff described in the RACE-LM problem statement. One KV migration and 29 local KV reuses were observed.
-
-One caveat: the first `kv_migrate` likely reflects a session state remaining in the controller from an earlier experiment because the same session ID was reused. For a completely clean experiment, restart OS-Ken before running, or use a new session ID.
