@@ -11,6 +11,8 @@ from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib import hub
 from os_ken.lib.packet import arp, ethernet, ipv4, packet, tcp
 
+from orchestration import OrchestrationError, Orchestrator
+
 SERVICE_IP = "10.0.0.50"
 SERVICE_PORT = 8000
 VIRTUAL_MAC = "00:00:00:00:00:fe"
@@ -22,6 +24,11 @@ BACKENDS = {
         "port": 2,
         "latency_ms": 4.0,
         "bandwidth_mbps": 100.0,
+        "state_bandwidth_mbps": 100.0,
+        "memory_gb": 12.0,
+        "models": ["small", "medium"],
+        "adapters": ["none", "networking"],
+        "private": True,
         "load": 0.0,
     },
     "cloud": {
@@ -30,6 +37,11 @@ BACKENDS = {
         "port": 3,
         "latency_ms": 35.0,
         "bandwidth_mbps": 1000.0,
+        "state_bandwidth_mbps": 1000.0,
+        "memory_gb": 64.0,
+        "models": ["small", "medium", "large"],
+        "adapters": ["none", "networking", "industrial", "healthcare"],
+        "private": False,
         "load": 0.0,
     },
 }
@@ -44,6 +56,7 @@ class SteeringState:
         self.packet_count = 0
         self.byte_count = 0
         self.port_stats = {}
+        self.orchestrator = Orchestrator(BACKENDS)
         self.lock = threading.Lock()
 
     def choose_backend(self):
@@ -77,6 +90,7 @@ class SteeringState:
                 "byte_count": self.byte_count,
                 "backends": BACKENDS,
                 "port_stats": self.port_stats,
+                "sessions": self.orchestrator.snapshot(),
             }
 
 
@@ -308,6 +322,10 @@ class SteeringAPIHandler(BaseHTTPRequestHandler):
 
         if self.path == "/policy":
             self._policy(payload)
+        elif self.path == "/orchestrate":
+            self._orchestrate(payload)
+        elif self.path == "/complete":
+            self._complete(payload)
         elif self.path.startswith("/load/"):
             self._load(self.path.split("/", 2)[-1], payload)
         else:
@@ -324,6 +342,29 @@ class SteeringAPIHandler(BaseHTTPRequestHandler):
                 self.app.state.static_backend = payload["backend"]
         self.app._clear_service_flows()
         self._json_response(200, self.app.state.snapshot())
+
+    def _orchestrate(self, payload):
+        try:
+            decision = self.app.state.orchestrator.decide(payload)
+        except (TypeError, ValueError, OrchestrationError) as error:
+            self._json_response(422, {"error": str(error)})
+            return
+        with self.app.state.lock:
+            self.app.state.mode = "dynamic"
+            self.app.state.last_backend = decision["backend"]
+            self.app.state.last_scores = {decision["backend"]: decision["score"]}
+        self.app._clear_service_flows()
+        for datapath in list(self.app.datapaths.values()):
+            self.app._install_service_flow(datapath, 1, decision["backend"])
+        self._json_response(200, decision)
+
+    def _complete(self, payload):
+        try:
+            result = self.app.state.orchestrator.complete(payload)
+        except (TypeError, ValueError) as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
 
     def _load(self, backend, payload):
         if backend not in BACKENDS:
