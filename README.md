@@ -31,7 +31,7 @@ curl -X POST http://127.0.0.1:8080/orchestrate \
 	-d '{"session_id":"demo-1","task":"networking","quality_min":0.8,"deadline_ms":500,"context_tokens":512,"kv_bytes":2048}'
 ```
 
-Copy the returned configuration into `client.py` when manually sending a request. The automated runner performs this exchange for every dynamic request and records the selected configuration in its CSV output. After a response, it calls `/complete` so the controller can retain session ownership and KV size for the next turn.
+Pass the returned `model`, `adapter`, `reasoning_level`, and `state_action` values to `client.py` as command-line options when manually sending a request. The automated runner performs this exchange for every dynamic request and records the selected configuration in its CSV output. After a response, it calls `/complete` so the controller can retain session ownership and KV size for the next turn.
 
 ## VM setup
 
@@ -102,10 +102,10 @@ Send a user prompt through the virtual service:
 client python3 /home/vboxuser/Desktop/sdn_project/client.py --requests 1 --prompt "Explain software defined networking"
 ```
 
-The response includes the selected backend, inference time, and end-to-end time:
+The response includes the selected backend, model configuration, inference time, and end-to-end time:
 
 ```json
-{"request": 1, "backend": "edge", "response": "synthetic LLM response", "inference_ms": 120.0, "end_to_end_ms": 200.0}
+{"request": 1, "backend": "edge", "model": "small", "adapter": "none", "reasoning_level": 0, "inference_ms": 155.0, "end_to_end_ms": 200.0}
 ```
 
 The request goes to `10.0.0.50:8000`. The controller changes the OVS output path: port 2 is edge and port 3 is cloud. The reverse flow rewrites the response source MAC to the virtual service MAC and sends the response back through port 1.
