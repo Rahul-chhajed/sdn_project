@@ -9,9 +9,29 @@ This project is a runnable Mininet prototype for steering a virtual LLM service 
 - `edge` has a 2 ms link and a 120 ms synthetic inference time.
 - `cloud` has a 25 ms link and a 45 ms synthetic inference time.
 - `controller.py` chooses a backend using latency, bandwidth, and reported load, then installs forward and reverse OpenFlow flows for the service IP.
-- `llm_server.py` is a deterministic HTTP emulator, so the experiment does not need a real model or GPU.
+- `orchestration.py` chooses a feasible backend, model, adapter, reasoning level, and KV-state action for each request.
+- `llm_server.py` is a deterministic HTTP emulator that executes and reports that configuration, so the experiment does not need a real model or GPU.
 
 The virtual service IP is intentionally shared by the two backend hosts. The controller changes only the destination MAC and output port, so the client uses the same URL in every experiment.
+
+## End-to-end request orchestration
+
+The prototype now exposes the research decisions through the controller API. The request selector considers backend load, latency, memory, model and adapter availability, privacy, minimum quality, deadline, and session locality. It returns:
+
+- `backend`, `model`, and `adapter`;
+- `reasoning_level` and `reasoning_tokens`;
+- `state_action`: `local_reuse`, `kv_migrate`, or `context_recompute`;
+- estimated latency, quality, and state-transfer time.
+
+The controller API is available while OS-Ken is running:
+
+```bash
+curl -X POST http://127.0.0.1:8080/orchestrate \
+	-H 'Content-Type: application/json' \
+	-d '{"session_id":"demo-1","task":"networking","quality_min":0.8,"deadline_ms":500,"context_tokens":512,"kv_bytes":2048}'
+```
+
+Copy the returned configuration into `client.py` when manually sending a request. The automated runner performs this exchange for every dynamic request and records the selected configuration in its CSV output. After a response, it calls `/complete` so the controller can retain session ownership and KV size for the next turn.
 
 ## VM setup
 
