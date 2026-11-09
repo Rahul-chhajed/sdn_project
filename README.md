@@ -9,9 +9,29 @@ This project is a runnable Mininet prototype for steering a virtual LLM service 
 - `edge` has a 2 ms link and a 120 ms synthetic inference time.
 - `cloud` has a 25 ms link and a 45 ms synthetic inference time.
 - `controller.py` chooses a backend using latency, bandwidth, and reported load, then installs forward and reverse OpenFlow flows for the service IP.
-- `llm_server.py` is a deterministic HTTP emulator, so the experiment does not need a real model or GPU.
+- `orchestration.py` chooses a feasible backend, model, adapter, reasoning level, and KV-state action for each request.
+- `llm_server.py` is a deterministic HTTP emulator that executes and reports that configuration, so the experiment does not need a real model or GPU.
 
 The virtual service IP is intentionally shared by the two backend hosts. The controller changes only the destination MAC and output port, so the client uses the same URL in every experiment.
+
+## End-to-end request orchestration
+
+The prototype now exposes the research decisions through the controller API. The request selector considers backend load, latency, memory, model and adapter availability, privacy, minimum quality, deadline, and session locality. It returns:
+
+- `backend`, `model`, and `adapter`;
+- `reasoning_level` and `reasoning_tokens`;
+- `state_action`: `local_reuse`, `kv_migrate`, or `context_recompute`;
+- estimated latency, quality, and state-transfer time.
+
+The controller API is available while OS-Ken is running:
+
+```bash
+curl -X POST http://127.0.0.1:8080/orchestrate \
+	-H 'Content-Type: application/json' \
+	-d '{"session_id":"demo-1","task":"networking","quality_min":0.8,"deadline_ms":500,"context_tokens":512,"kv_bytes":2048}'
+```
+
+Pass the returned `model`, `adapter`, `reasoning_level`, and `state_action` values to `client.py` as command-line options when manually sending a request. The automated runner performs this exchange for every dynamic request and records the selected configuration in its CSV output. After a response, it calls `/complete` so the controller can retain session ownership and KV size for the next turn.
 
 ## VM setup
 
@@ -82,10 +102,10 @@ Send a user prompt through the virtual service:
 client python3 /home/vboxuser/Desktop/sdn_project/client.py --requests 1 --prompt "Explain software defined networking"
 ```
 
-The response includes the selected backend, inference time, and end-to-end time:
+The response includes the selected backend, model configuration, inference time, and end-to-end time:
 
 ```json
-{"request": 1, "backend": "edge", "response": "synthetic LLM response", "inference_ms": 120.0, "end_to_end_ms": 200.0}
+{"request": 1, "backend": "edge", "model": "small", "adapter": "none", "reasoning_level": 0, "inference_ms": 155.0, "end_to_end_ms": 200.0}
 ```
 
 The request goes to `10.0.0.50:8000`. The controller changes the OVS output path: port 2 is edge and port 3 is cloud. The reverse flow rewrites the response source MAC to the virtual service MAC and sends the response back through port 1.
@@ -160,13 +180,49 @@ Stop the Mininet CLI with `exit`, but leave OS-Ken running. Then run:
 ```bash
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
+sudo -E "$VIRTUAL_VENV/bin/python3" run_experiment.py \
 	--requests 20 \
 	--prompt "Explain the benefits of edge AI" \
 	--output results.csv
 ```
 
 The runner starts Mininet, starts both emulators, runs static-cloud and dynamic phases, writes per-request measurements to `results.csv`, and prints average latency and backend counts.
+
+## Generate mathematical results
+
+Run the experiment with the controller and Mininet already configured:
+
+```bash
+sudo -E "$VIRTUAL_VENV/bin/python3" run_experiment.py \
+	--requests 30 \
+	--pause-ms 100 \
+	--prompt "Explain the benefits of edge AI" \
+	--output results.csv
+python3 analyze_results.py --input results.csv --deadline-ms 500
+```
+
+The analyzer reports mean latency, standard deviation, p95 latency, SLA violation rate, backend and model counts, state-action counts, mean quality, and mean reasoning tokens. The `dynamic_latency_reduction_percent` value compares the dynamic phase with the static-cloud baseline:
+
+```text
+latency reduction (%) = 100 * (static mean E2E - dynamic mean E2E) / static mean E2E
+```
+
+The prototype implements these PDF-inspired calculations:
+
+```text
+quality Q = min(1, model quality + adapter bonus + reasoning bonus)
+estimated latency T = network latency + model latency + reasoning latency + state latency
+KV migration T_mig = 8 + KV bytes * 8 / (state bandwidth Mbps * 1000) milliseconds
+context recomputation T_rec = max(5, context tokens * model latency / 1000) milliseconds
+```
+
+The controller selects the feasible configuration with the lowest score:
+
+```text
+score = T + 80 * load + 20 * model cost + 15 * reasoning cost + 0.25 * state latency
+```
+
+For a professor-facing result, repeat the command at least 3-5 times, save each CSV with a different filename, and report mean, standard deviation, p95 latency, backend distribution, state-action distribution, quality, and SLA violation rate. Quality, model latency, cost, and energy are currently deterministic simulation proxies; real LLM/GPU measurements are required for production claims.
 
 ## What to extend next
 
@@ -188,71 +244,6 @@ When finished, exit Mininet and clean up:
 mininet> exit
 ```
 
-
-result.csv
-```text
-phase,request,backend,model,adapter,reasoning_level,reasoning_tokens,state_action,quality,inference_ms,end_to_end_ms
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.86,386.6
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,196.19,377.67
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,206.29,417.87
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.35,360.28
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.96,365.56
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,300.86,497.99
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,204.35,391.81
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,201.29,403.42
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,271.53,466.64
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.07,372.63
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,212.98,385.41
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,249.31,458.54
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,221.48,442.89
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,201.09,423.84
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,212.22,377.6
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.89,353.92
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,333.19,566.9
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,626.17,1058.56
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,285.88,490.8
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,260.92,470.9
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,326.23,568.37
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,844.82,1463.56
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,213.76,594.43
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,234.94,576.95
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,256.44,495.61
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,235.11,427.9
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,199.02,368.68
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.56,363.19
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,195.82,408.68
-static_cloud,1,cloud,large,none,0,0,local_reuse,0.91,200.69,390.03
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,110.81,305.06
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,102.08,328.51
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,106.53,335.68
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,103.22,318.36
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,143.2,313.56
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,100.7,267.86
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,193.11,384.25
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,135.33,320.22
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,116.62,315.11
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,101.59,290.91
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,188.19,389.02
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,108.01,264.82
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,278.76,501.85
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,137.02,449.11
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,194.25,453.35
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,130.32,354.39
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,100.63,323.42
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,149.58,638.88
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,101.38,497.35
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,100.2,467.16
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,104.94,375.17
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,139.65,337.31
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,101.07,298.96
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,100.72,329.63
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,101.19,314.25
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,105.5,330.66
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,108.17,333.81
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,101.31,333.16
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,175.33,386.87
-dynamic,1,cloud,small,networking,1,128,local_reuse,0.74,100.51,508.33
-
-```
+```bash
 sudo mn -c
 ```
