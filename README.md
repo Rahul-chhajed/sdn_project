@@ -58,7 +58,7 @@ Use three terminals. Keep Terminals 1 and 2 running.
 ```bash
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E "$VIRTUAL_ENV/bin/osken-manager" controller.py \
+sudo -E "$VIRTUAL_VENV/bin/osken-manager" controller.py \
 	--ofp-tcp-listen-port 6653
 ```
 
@@ -79,7 +79,7 @@ The first command should return JSON. If it fails, OS-Ken is not running correct
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
 sudo mn -c
-sudo -E "$VIRTUAL_ENV/bin/python3" topology.py --cli
+sudo -E "$VIRTUAL_VENV/bin/python3" topology.py --cli
 ```
 
 The topology automatically starts the edge and cloud HTTP emulators. At the `mininet>` prompt, verify both services:
@@ -180,7 +180,7 @@ Stop the Mininet CLI with `exit`, but leave OS-Ken running. Then run:
 ```bash
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
+sudo -E "$VIRTUAL_VENV/bin/python3" run_experiment.py \
 	--requests 20 \
 	--prompt "Explain the benefits of edge AI" \
 	--output results.csv
@@ -193,7 +193,7 @@ The runner starts Mininet, starts both emulators, runs static-cloud and dynamic 
 Run the experiment with the controller and Mininet already configured:
 
 ```bash
-sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
+sudo -E "$VIRTUAL_VENV/bin/python3" run_experiment.py \
 	--requests 30 \
 	--pause-ms 100 \
 	--prompt "Explain the benefits of edge AI" \
