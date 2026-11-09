@@ -58,7 +58,7 @@ Use three terminals. Keep Terminals 1 and 2 running.
 ```bash
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
-sudo -E "$VIRTUAL_VENV/bin/osken-manager" controller.py \
+sudo -E "$VIRTUAL_ENV/bin/osken-manager" controller.py \
 	--ofp-tcp-listen-port 6653
 ```
 
@@ -79,7 +79,7 @@ The first command should return JSON. If it fails, OS-Ken is not running correct
 cd ~/Desktop/sdn_project
 source .venv/bin/activate
 sudo mn -c
-sudo -E "$VIRTUAL_VENV/bin/python3" topology.py --cli
+sudo -E "$VIRTUAL_ENV/bin/python3" topology.py --cli
 ```
 
 The topology automatically starts the edge and cloud HTTP emulators. At the `mininet>` prompt, verify both services:
@@ -187,6 +187,42 @@ sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
 ```
 
 The runner starts Mininet, starts both emulators, runs static-cloud and dynamic phases, writes per-request measurements to `results.csv`, and prints average latency and backend counts.
+
+## Generate mathematical results
+
+Run the experiment with the controller and Mininet already configured:
+
+```bash
+sudo -E "$VIRTUAL_ENV/bin/python" run_experiment.py \
+	--requests 30 \
+	--pause-ms 100 \
+	--prompt "Explain the benefits of edge AI" \
+	--output results.csv
+python3 analyze_results.py --input results.csv --deadline-ms 500
+```
+
+The analyzer reports mean latency, standard deviation, p95 latency, SLA violation rate, backend and model counts, state-action counts, mean quality, and mean reasoning tokens. The `dynamic_latency_reduction_percent` value compares the dynamic phase with the static-cloud baseline:
+
+```text
+latency reduction (%) = 100 * (static mean E2E - dynamic mean E2E) / static mean E2E
+```
+
+The prototype implements these PDF-inspired calculations:
+
+```text
+quality Q = min(1, model quality + adapter bonus + reasoning bonus)
+estimated latency T = network latency + model latency + reasoning latency + state latency
+KV migration T_mig = 8 + KV bytes * 8 / (state bandwidth Mbps * 1000) milliseconds
+context recomputation T_rec = max(5, context tokens * model latency / 1000) milliseconds
+```
+
+The controller selects the feasible configuration with the lowest score:
+
+```text
+score = T + 80 * load + 20 * model cost + 15 * reasoning cost + 0.25 * state latency
+```
+
+For a professor-facing result, repeat the command at least 3-5 times, save each CSV with a different filename, and report mean, standard deviation, p95 latency, backend distribution, state-action distribution, quality, and SLA violation rate. Quality, model latency, cost, and energy are currently deterministic simulation proxies; real LLM/GPU measurements are required for production claims.
 
 ## What to extend next
 
