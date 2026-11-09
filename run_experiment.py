@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import os
+import shlex
 import time
 import urllib.request
 
@@ -28,17 +29,60 @@ def set_policy(mode, backend=None):
     return post_json(f"{CONTROLLER_API}/policy", payload)
 
 
-def run_phase(client, client_script, phase, count, pause_ms, prompt):
-    command = f"python3 {client_script} --requests {count} --pause-ms {pause_ms} --prompt {prompt!r}"
-    output = client.cmd(command)
+def run_phase(client, client_script, phase, count, pause_ms, prompt, orchestrate=False):
     results = []
-    for line in output.splitlines():
-        try:
-            row = json.loads(line)
+    session_id = f"experiment-{phase}"
+    for index in range(count):
+        decision = {
+            "model": "large" if phase == "static_cloud" else "small",
+            "adapter": "none",
+            "reasoning_level": 0,
+            "state_action": "local_reuse",
+            "context_tokens": index * 256,
+            "kv_bytes": index * 1024,
+        }
+        if orchestrate:
+            decision = post_json(f"{CONTROLLER_API}/orchestrate", {
+                "session_id": session_id,
+                "task": "networking",
+                "complexity": "normal",
+                "quality_min": 0.70,
+                "deadline_ms": 500,
+                "context_tokens": index * 256,
+                "kv_bytes": index * 1024,
+            })
+        decision.setdefault("context_tokens", index * 256)
+        decision.setdefault("kv_bytes", index * 1024)
+        options = " ".join(
+            f"--{name.replace('_', '-')} {shlex.quote(str(decision[name]))}"
+            for name in (
+                "model", "adapter", "reasoning_level", "state_action",
+                "context_tokens", "kv_bytes",
+            )
+        )
+        command = (
+            f"python3 {shlex.quote(client_script)} --requests 1 --pause-ms 0 "
+            f"--session-id {shlex.quote(session_id)} --prompt {shlex.quote(prompt)} {options}"
+        )
+        output = client.cmd(command)
+        for line in output.splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             row["phase"] = phase
+            for name in ("model", "adapter", "reasoning_level", "reasoning_tokens", "state_action", "quality"):
+                if name in decision:
+                    row[f"selected_{name}"] = decision[name]
             results.append(row)
-        except json.JSONDecodeError:
-            continue
+            if orchestrate:
+                post_json(f"{CONTROLLER_API}/complete", {
+                    "session_id": session_id,
+                    "backend": row.get("backend", decision.get("backend", "edge")),
+                    "context_tokens": (index + 1) * 256,
+                    "kv_bytes": row.get("kv_bytes", (index + 1) * 1024),
+                })
+        time.sleep(pause_ms / 1000.0)
     return results
 
 
@@ -62,10 +106,13 @@ def main():
         set_policy("static", "cloud")
         rows = run_phase(client, client_path, "static_cloud", args.requests, args.pause_ms, args.prompt)
         set_policy("dynamic")
-        rows.extend(run_phase(client, client_path, "dynamic", args.requests, args.pause_ms, args.prompt))
+        rows.extend(run_phase(client, client_path, "dynamic", args.requests, args.pause_ms, args.prompt, orchestrate=True))
 
         with open(args.output, "w", newline="", encoding="utf-8") as output:
-            fields = ["phase", "request", "backend", "inference_ms", "end_to_end_ms"]
+            fields = [
+                "phase", "request", "backend", "model", "adapter", "reasoning_level",
+                "reasoning_tokens", "state_action", "quality", "inference_ms", "end_to_end_ms",
+            ]
             writer = csv.DictWriter(output, fieldnames=fields)
             writer.writeheader()
             writer.writerows({field: row.get(field, "") for field in fields} for row in rows)
