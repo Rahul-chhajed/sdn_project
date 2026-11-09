@@ -20,9 +20,36 @@ def main():
     parser.add_argument("--requests", type=int, default=10)
     parser.add_argument("--pause-ms", type=float, default=100)
     parser.add_argument("--prompt", default="benchmark request")
+    parser.add_argument("--session-id", default="default")
+    parser.add_argument("--task", default="general")
+    parser.add_argument("--complexity", default="normal")
+    parser.add_argument("--privacy", choices=("standard", "sensitive"), default="standard")
+    parser.add_argument("--quality-min", type=float, default=0.60)
+    parser.add_argument("--deadline-ms", type=float, default=500.0)
+    parser.add_argument("--context-tokens", type=int, default=0)
+    parser.add_argument("--kv-bytes", type=int, default=0)
+    parser.add_argument("--model", default="small")
+    parser.add_argument("--adapter", default="none")
+    parser.add_argument("--reasoning-level", type=int, choices=(0, 1, 2, 3), default=0)
+    parser.add_argument("--state-action", default="local_reuse")
     args = parser.parse_args()
     for index in range(args.requests):
-        print(json.dumps({"request": index + 1, **request(args.url, {"prompt": args.prompt})}), flush=True)
+        payload = {
+            "prompt": args.prompt,
+            "session_id": args.session_id,
+            "task": args.task,
+            "complexity": args.complexity,
+            "privacy": args.privacy,
+            "quality_min": args.quality_min,
+            "deadline_ms": args.deadline_ms,
+            "context_tokens": args.context_tokens,
+            "kv_bytes": args.kv_bytes,
+            "model": args.model,
+            "adapter": args.adapter,
+            "reasoning_level": args.reasoning_level,
+            "state_action": args.state_action,
+        }
+        print(json.dumps({"request": index + 1, **request(args.url, payload)}), flush=True)
         time.sleep(args.pause_ms / 1000.0)
 
 
