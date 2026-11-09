@@ -105,6 +105,8 @@ def main():
 
         set_policy("static", "cloud")
         rows = run_phase(client, client_path, "static_cloud", args.requests, args.pause_ms, args.prompt)
+        post_json(f"{CONTROLLER_API}/load/edge", {"load": 0.0})
+        post_json(f"{CONTROLLER_API}/load/cloud", {"load": 0.0})
         set_policy("dynamic")
         rows.extend(run_phase(client, client_path, "dynamic", args.requests, args.pause_ms, args.prompt, orchestrate=True))
 
