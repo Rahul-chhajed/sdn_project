@@ -1,4 +1,4 @@
-# SDN Dynamic LLM Placement Prototype
+# RACE-LM: Reasoning- and Cache-Elastic Large Model Serving over Cloud–Edge Networks
 
 This project is a runnable Mininet prototype for steering a virtual LLM service between an edge and cloud backend with OS-Ken, OpenFlow 1.3, and Open vSwitch.
 
